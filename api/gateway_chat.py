@@ -41,8 +41,6 @@ logger = logging.getLogger(__name__)
 
 def _webui_debug_outbound_prompt(payload_name: str, *, messages: list[dict[str, Any]], system_prompt: str | None = None) -> None:
     """Log the exact outbound WebUI payload when debugging prompt padding."""
-    if str(os.getenv("HERMES_WEBUI_DEBUG_OUTBOUND_PROMPT", "")).strip().lower() not in {"1", "true", "yes", "on"}:
-        return
     preview = []
     for msg in messages or []:
         if not isinstance(msg, dict):
