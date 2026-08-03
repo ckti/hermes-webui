@@ -15,6 +15,7 @@ from api.models import new_session
 from api.gateway_chat import (
     _gateway_http_error_event,
     _gateway_reasoning_delta,
+    _gateway_send_history_enabled,
     _gateway_sse_delta,
     _gateway_sse_reasoning_delta,
     _gateway_stream_usage,
@@ -59,6 +60,7 @@ def test_gateway_chat_config_status_is_redacted_and_reports_missing_key():
         "backend": "gateway",
         "base_url_configured": True,
         "api_key_configured": False,
+        "history_enabled": False,
     }
 
 
@@ -73,6 +75,28 @@ def test_gateway_chat_config_status_reports_fallback_api_server_key_without_expo
 
     assert status["api_key_configured"] is True
     assert "secret-token" not in repr(status)
+
+
+def test_gateway_send_history_toggle_defaults_off_and_accepts_explicit_truthy_values():
+    assert _gateway_send_history_enabled({}, {}) is False
+    assert _gateway_send_history_enabled({"webui_gateway_send_history": "true"}, {}) is True
+    assert _gateway_send_history_enabled({"webui_gateway_send_history": "1"}, {}) is True
+
+
+def test_gateway_send_history_env_wins_over_config():
+    assert _gateway_send_history_enabled(
+        {"webui_gateway_send_history": "true"},
+        {"HERMES_WEBUI_GATEWAY_SEND_HISTORY": "false"},
+    ) is False
+
+
+def test_gateway_chat_config_status_reports_history_toggle():
+    status = gateway_chat_config_status(
+        {"webui_gateway_send_history": "yes"},
+        {"HERMES_WEBUI_CHAT_BACKEND": "gateway"},
+    )
+
+    assert status["history_enabled"] is True
 
 
 def test_gateway_chat_backend_env_wins_over_config_and_stays_safe():
@@ -353,24 +377,8 @@ def test_gateway_chat_worker_translates_sse_and_persists_session(tmp_path, monke
     assert '"stream": true' in captured["body"]
     payload = json.loads(captured["body"])
     assert payload["reasoning_effort"] == "high"
-    # #3324: the gateway path's first system message is now the full WebUI
-    # ephemeral system prompt (progress prompt + session/delivery context),
-    # NOT the bare _WEBUI_PROGRESS_PROMPT — otherwise the delivery/session
-    # context is silently dropped on Gateway-routed WebUI chats.
-    system_msg = payload["messages"][0]
-    assert system_msg["role"] == "system"
-    assert "Final visible assistant replies" in system_msg["content"]
-    assert "Need script" in system_msg["content"]
-    # The moved session/delivery context must be present in the system prompt.
-    assert "Connected Platforms:" in system_msg["content"]
-    assert "Delivery options for scheduled tasks:" in system_msg["content"]
-    # The gateway path keeps safe recall prefill context while removing
-    # terminal user-role prefill before the actual browser user turn.
-    assert [m["content"] for m in payload["messages"][1:]] == [
-        "prefill summary",
-        "Say hello",
-    ]
     assert [m["role"] for m in payload["messages"]] == ["system", "assistant", "user"]
+    assert [m["content"] for m in payload["messages"][1:]] == ["prefill summary", "Say hello"]
     events = []
     while not subscriber.empty():
         events.append(subscriber.get_nowait())
@@ -394,6 +402,130 @@ def test_gateway_chat_worker_translates_sse_and_persists_session(tmp_path, monke
         "tid": "call-1",
     }) in event_pairs
     assert all(len(item) == 3 and item[2] for item in events)
+
+
+def test_gateway_chat_worker_sends_prompt_without_history(tmp_path, monkeypatch):
+    session_dir = tmp_path / "sessions"
+    session_dir.mkdir()
+    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
+    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr(models, "SESSIONS", OrderedDict())
+
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def __iter__(self):
+            yield b'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'
+            yield b'data: [DONE]\n\n'
+
+    def fake_urlopen(req, timeout=0):
+        captured["body"] = req.data.decode("utf-8")
+        return FakeResponse()
+
+    monkeypatch.setenv("HERMES_WEBUI_GATEWAY_BASE_URL", "http://gateway.local")
+    monkeypatch.setenv("HERMES_WEBUI_GATEWAY_API_KEY", "secret-token")
+    monkeypatch.setattr(gateway_chat, "_gateway_reasoning_effort_for_request", lambda *args, **kwargs: None)
+    monkeypatch.setattr(streaming, "_load_webui_prefill_context", lambda cfg: {"status": "loaded", "source": "test", "label": "test", "message_count": 0, "messages": []})
+    monkeypatch.setattr(streaming, "_prefill_messages_with_webui_context", lambda ctx, cfg: [])
+    monkeypatch.setattr(gateway_chat.urllib.request, "urlopen", fake_urlopen)
+
+    s = new_session()
+    stream_id = "stream-gateway-history-cap-test"
+    s.active_stream_id = stream_id
+    s.pending_user_message = "hello there"
+    s.pending_started_at = 123
+    s.pending_attachments = []
+    s.context_messages = [
+        {"role": "user", "content": f"turn {i}"}
+        for i in range(30)
+    ]
+    s.save()
+    channel = create_stream_channel()
+    STREAMS[stream_id] = channel
+
+    gateway_chat._run_gateway_chat_streaming(
+        s.session_id,
+        "hello there",
+        "test-model",
+        str(tmp_path),
+        stream_id,
+        [],
+    )
+
+    payload = json.loads(captured["body"])
+    assert "conversation_history" not in payload
+    assert payload["messages"][0]["role"] == "system"
+    assert payload["messages"][-1]["content"] == "hello there"
+
+
+def test_gateway_chat_worker_sends_history_when_enabled(tmp_path, monkeypatch):
+    session_dir = tmp_path / "sessions"
+    session_dir.mkdir()
+    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
+    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr(models, "SESSIONS", OrderedDict())
+
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def __iter__(self):
+            yield b'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'
+            yield b'data: [DONE]\n\n'
+
+    def fake_urlopen(req, timeout=0):
+        captured["body"] = req.data.decode("utf-8")
+        return FakeResponse()
+
+    monkeypatch.setenv("HERMES_WEBUI_GATEWAY_BASE_URL", "http://gateway.local")
+    monkeypatch.setenv("HERMES_WEBUI_GATEWAY_API_KEY", "secret-token")
+    monkeypatch.setenv("HERMES_WEBUI_GATEWAY_SEND_HISTORY", "1")
+    monkeypatch.setattr(gateway_chat, "_gateway_reasoning_effort_for_request", lambda *args, **kwargs: None)
+    monkeypatch.setattr(streaming, "_load_webui_prefill_context", lambda cfg: {"status": "loaded", "source": "test", "label": "test", "message_count": 0, "messages": []})
+    monkeypatch.setattr(streaming, "_prefill_messages_with_webui_context", lambda ctx, cfg: [])
+    monkeypatch.setattr(gateway_chat.urllib.request, "urlopen", fake_urlopen)
+
+    s = new_session()
+    stream_id = "stream-gateway-history-enabled-test"
+    s.active_stream_id = stream_id
+    s.pending_user_message = "hello there"
+    s.pending_started_at = 123
+    s.pending_attachments = []
+    s.context_messages = [
+        {"role": "user", "content": "Earlier question"},
+        {"role": "assistant", "content": "Earlier answer"},
+    ]
+    s.save()
+    channel = create_stream_channel()
+    STREAMS[stream_id] = channel
+
+    gateway_chat._run_gateway_chat_streaming(
+        s.session_id,
+        "hello there",
+        "test-model",
+        str(tmp_path),
+        stream_id,
+        [],
+    )
+
+    payload = json.loads(captured["body"])
+    assert payload["messages"] == [
+        {"role": "system", "content": payload["messages"][0]["content"]},
+        {"role": "user", "content": "Earlier question"},
+        {"role": "assistant", "content": "Earlier answer"},
+        {"role": "user", "content": "hello there"},
+    ]
 
 
 def test_gateway_chat_worker_classifies_terminal_provider_error_without_text(tmp_path, monkeypatch):

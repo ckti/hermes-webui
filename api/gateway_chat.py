@@ -149,6 +149,7 @@ _WEBUI_CHAT_BACKEND_ENV = "HERMES_WEBUI_CHAT_BACKEND"
 _WEBUI_GATEWAY_BASE_URL_ENV = "HERMES_WEBUI_GATEWAY_BASE_URL"
 _WEBUI_GATEWAY_API_KEY_ENV = "HERMES_WEBUI_GATEWAY_API_KEY"
 _WEBUI_GATEWAY_USE_RUNS_API_ENV = "HERMES_WEBUI_GATEWAY_USE_RUNS_API"
+_WEBUI_GATEWAY_SEND_HISTORY_ENV = "HERMES_WEBUI_GATEWAY_SEND_HISTORY"
 _GATEWAY_CHAT_BACKENDS = {"gateway", "api_server", "api-server"}
 
 
@@ -286,6 +287,51 @@ def _gateway_use_runs_api_enabled(config_data=None, environ: dict[str, str] | No
     return raw in ("1", "true", "yes", "on")
 
 
+def _gateway_send_history_enabled(config_data=None, environ: dict[str, str] | None = None) -> bool:
+    """Return True when WebUI should include prior session messages in gateway requests."""
+    source = os.environ if environ is None else environ
+    cfg = config_data if isinstance(config_data, dict) else {}
+    raw = str(
+        source.get(_WEBUI_GATEWAY_SEND_HISTORY_ENV)
+        or cfg.get("webui_gateway_send_history")
+        or ""
+    ).strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
+def _gateway_session_history_messages(
+    session: Any,
+    cfg: dict | None,
+    *,
+    model: str | None = None,
+    model_provider: str | None = None,
+    base_url: str | None = None,
+) -> list[dict]:
+    """Return API-safe prior messages for a gateway turn when history is enabled."""
+    if not _gateway_send_history_enabled(cfg):
+        return []
+    raw_history = list(
+        getattr(session, "context_messages", None)
+        or getattr(session, "messages", None)
+        or []
+    )
+    if not raw_history:
+        return []
+    try:
+        from api.streaming import _sanitize_messages_for_api
+
+        return _sanitize_messages_for_api(
+            raw_history,
+            cfg=cfg,
+            effective_model=model,
+            effective_provider=model_provider,
+            effective_base_url=base_url,
+        )
+    except Exception:
+        logger.debug("Failed to sanitize gateway session history", exc_info=True)
+        return []
+
+
 def _gateway_reasoning_effort_for_request(cfg, *, model=None, model_provider=None):
     """Read and coerce user-configured reasoning effort for a gateway request."""
     try:
@@ -312,6 +358,7 @@ def gateway_chat_config_status(config_data=None, environ: dict[str, str] | None 
         "backend": mode,
         "base_url_configured": bool(base_url),
         "api_key_configured": bool(_gateway_api_key(environ)),
+        "history_enabled": _gateway_send_history_enabled(config_data, environ),
     }
 
 
@@ -471,7 +518,7 @@ def _gateway_runs_approval_event(payload: dict) -> dict | None:
 
 def _run_gateway_runs_api_streaming(
     session_id, msg_text, model, workspace, stream_id,
-    base_url, api_key, prefill_messages, body_extras,
+    base_url, api_key, conversation_history, body_extras, instructions=None,
     *, put_gateway_event, cancel_event,
     attachments=None, cfg=None, session=None,
 ):
@@ -495,36 +542,6 @@ def _run_gateway_runs_api_streaming(
             except Exception:
                 logger.debug("Failed to build runs-API multimodal attachment payload", exc_info=True)
                 message_content = str(msg_text or "")
-        from api.streaming import _strip_oob_blocks
-
-        instructions_parts = []
-        conversation_history = []
-        for entry in getattr(session, "context_messages", None) or []:
-            if not isinstance(entry, dict):
-                continue
-            role = str(entry.get("role") or "").strip().lower()
-            if role not in {"user", "assistant"}:
-                continue
-            content = entry.get("content")
-            if content is not None:
-                content = _strip_oob_blocks(content)
-                conversation_history.append({"role": role, "content": content})
-        for entry in prefill_messages or []:
-            if not isinstance(entry, dict):
-                continue
-            role = str(entry.get("role") or "").strip().lower()
-            content = entry.get("content")
-            if role == "system":
-                if isinstance(content, str) and content.strip():
-                    instructions_parts.append(content)
-                elif content is not None:
-                    instructions_parts.append(str(content))
-                continue
-            if role not in {"user", "assistant"}:
-                continue
-            if content is not None:
-                content = _strip_oob_blocks(content)
-            conversation_history.append({"role": role, "content": content})
         run_input = message_content
         if isinstance(run_input, list):
             run_input = [{"role": "user", "content": run_input}]
@@ -534,8 +551,8 @@ def _run_gateway_runs_api_streaming(
             **body_extras,
             "session_id": session_id,
         }
-        if instructions_parts:
-            run_body["instructions"] = "\n\n".join(part for part in instructions_parts if part)
+        if instructions:
+            run_body["instructions"] = instructions
         if conversation_history:
             run_body["conversation_history"] = conversation_history
         req = urllib.request.Request(
@@ -902,21 +919,18 @@ def _run_gateway_chat_streaming(
         if not _use_runs_api and runs_api_pending_marked:
             _finish_gateway_run_starting(stream_id, result="fallback")
             runs_api_pending_marked = False
+        _gateway_system_prompt = ""
+        prefill_messages = []
         try:
             from api.streaming import (
                 _load_webui_prefill_context,
-                _prefill_messages_with_webui_context,
                 _normalize_prefill_messages_before_user_turn,
+                _prefill_messages_with_webui_context,
                 _public_prefill_context_status,
                 _webui_ephemeral_system_prompt,
             )
 
             prefill_context = _load_webui_prefill_context(cfg)
-            # #3324: the WebUI session/delivery context (connected platforms,
-            # home channels, delivery hints, session framing) is now carried in
-            # the ephemeral system prompt rather than a prefill `user` message.
-            # The gateway-backed path must build the SAME system prompt so that
-            # context is not silently dropped on Gateway-routed WebUI chats.
             _gateway_system_prompt = _webui_ephemeral_system_prompt(
                 None,
                 surface_context={
@@ -940,6 +954,18 @@ def _run_gateway_chat_streaming(
         except Exception:
             logger.debug("Failed to load WebUI gateway prefill context", exc_info=True)
             prefill_messages = []
+        try:
+            gateway_history = _gateway_session_history_messages(
+                s,
+                cfg,
+                model=model,
+                model_provider=model_provider,
+                base_url=base_url,
+            )
+        except Exception:
+            logger.debug("Failed to load WebUI gateway history", exc_info=True)
+            gateway_history = []
+        gateway_context_messages = list(prefill_messages) + list(gateway_history)
         if _use_runs_api:
             body_extras = {}
             if model_provider:
@@ -951,7 +977,7 @@ def _run_gateway_chat_streaming(
             try:
                 final_text, usage = _run_gateway_runs_api_streaming(
                     session_id, msg_text, model, workspace, stream_id,
-                    base_url, api_key, prefill_messages, body_extras,
+                    base_url, api_key, [m for m in gateway_context_messages if str((m or {}).get("role") or "").strip().lower() != "system"], body_extras, _gateway_system_prompt or None,
                     put_gateway_event=put_gateway_event,
                     cancel_event=cancel_event,
                     attachments=attachments,
@@ -1012,10 +1038,12 @@ def _run_gateway_chat_streaming(
                 except Exception:
                     logger.debug("Failed to build gateway multimodal attachment payload", exc_info=True)
                     message_content = str(msg_text or "")
+            messages = list(gateway_context_messages)
+            messages.append({"role": "user", "content": message_content})
             body = {
                 "model": model or "default",
                 "stream": True,
-                "messages": [*prefill_messages, {"role": "user", "content": message_content}],
+                "messages": messages,
             }
             if model_provider:
                 body["provider"] = model_provider
