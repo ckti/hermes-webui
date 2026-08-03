@@ -8535,6 +8535,9 @@ def _run_agent_streaming(
             _prefill_context = _load_webui_prefill_context(_cfg)
             _prefill_messages = _prefill_messages_with_webui_context(_prefill_context, _cfg)
             _prefill_messages = _normalize_prefill_messages_before_user_turn(_prefill_messages)
+            _prompt_only_mode = True
+            if _prompt_only_mode:
+                _prefill_messages = []
             _main_request_overrides = _main_model_request_overrides(
                 _cfg,
                 effective_model=resolved_model,
@@ -8738,6 +8741,9 @@ def _run_agent_streaming(
             # re-instantiated fresh each turn (#855).
             if 'gateway_session_key' in _agent_params:
                 _agent_kwargs['gateway_session_key'] = session_id
+            if _prompt_only_mode:
+                _agent_kwargs['ephemeral_system_prompt'] = ""
+                _agent_kwargs['prefill_messages'] = []
 
             # ── Agent cache: reuse across messages in the same session ──
             # Mirrors gateway _agent_cache.  Keeps _user_turn_count alive so
@@ -8845,6 +8851,12 @@ def _run_agent_streaming(
                         agent.clarify_callback = _agent_kwargs.get('clarify_callback')
                     if 'prefill_messages' in _agent_kwargs and hasattr(agent, 'prefill_messages'):
                         agent.prefill_messages = list(_agent_kwargs.get('prefill_messages') or [])
+                    if _prompt_only_mode:
+                        agent._prompt_only_mode = True
+                        agent.ephemeral_system_prompt = ""
+                        agent.prefill_messages = []
+                        if hasattr(agent, '_invalidate_system_prompt'):
+                            agent._invalidate_system_prompt()
                     if _session_db is not None:
                         # Prefer reusing a still-open SessionDB on the cached
                         # agent. Closing it mid-turn breaks background
@@ -8870,6 +8882,12 @@ def _run_agent_streaming(
                         agent._interrupt_message = None
                 else:
                     agent = _AIAgent(**_agent_kwargs)
+                    if _prompt_only_mode:
+                        agent._prompt_only_mode = True
+                        agent.ephemeral_system_prompt = ""
+                        agent.prefill_messages = []
+                        if hasattr(agent, '_invalidate_system_prompt'):
+                            agent._invalidate_system_prompt()
                     # Register the new agent with the memory lifecycle so
                     # its commit_memory_session() can be found later.
                     try:
@@ -8945,7 +8963,9 @@ def _run_agent_streaming(
             # Prepend workspace context so the agent always knows which directory
             # to use for file operations, regardless of session age or AGENTS.md defaults.
             workspace_ctx = _workspace_context_prefix(str(s.workspace))
-            workspace_system_msg = (
+            if _prompt_only_mode:
+                workspace_ctx = ""
+            workspace_system_msg = "" if _prompt_only_mode else (
                 f"Active workspace at session start: {s.workspace}\n"
                 "Every user message is prefixed with [Workspace::v1: /absolute/path] indicating the "
                 "workspace the user has selected in the web UI at the time they sent that message. "
@@ -8988,6 +9008,11 @@ def _run_agent_streaming(
                 },
                 config_data=_cfg,
             )
+            if _prompt_only_mode:
+                agent.ephemeral_system_prompt = ""
+                agent._prompt_only_mode = True
+                if hasattr(agent, '_invalidate_system_prompt'):
+                    agent._invalidate_system_prompt()
             _pending_started_at = getattr(s, 'pending_started_at', None)
             meter().set_pending_started_at(stream_id, _pending_started_at)
             # Normal chat-start sets pending_started_at before spawning this thread;
@@ -9069,7 +9094,7 @@ def _run_agent_streaming(
                 pending_async_acceptances=_pending_async_acceptances,
             )
             _agent_msg_text = msg_text
-            if _process_notifications:
+            if _process_notifications and not _prompt_only_mode:
                 _agent_msg_text = "\n\n".join([*_process_notifications, msg_text]).strip()
             user_message = _build_native_multimodal_message(workspace_ctx, _agent_msg_text, attachments, workspace, cfg=_cfg)
             _persistent_state_before = _persistent_state_snapshot(_profile_home)

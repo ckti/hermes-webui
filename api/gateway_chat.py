@@ -921,6 +921,7 @@ def _run_gateway_chat_streaming(
             runs_api_pending_marked = False
         _gateway_system_prompt = ""
         prefill_messages = []
+        _prompt_only_mode = True
         try:
             from api.streaming import (
                 _load_webui_prefill_context,
@@ -941,8 +942,12 @@ def _run_gateway_chat_streaming(
                 },
                 config_data=cfg,
             )
+            if _prompt_only_mode:
+                _gateway_system_prompt = ""
             prefill_messages = _prefill_messages_with_webui_context(prefill_context, cfg)
             prefill_messages = _normalize_prefill_messages_before_user_turn(prefill_messages)
+            if _prompt_only_mode:
+                prefill_messages = []
             prefill_messages = [
                 {"role": "system", "content": _gateway_system_prompt},
                 *prefill_messages,
@@ -964,6 +969,8 @@ def _run_gateway_chat_streaming(
             )
         except Exception:
             logger.debug("Failed to load WebUI gateway history", exc_info=True)
+            gateway_history = []
+        if _prompt_only_mode:
             gateway_history = []
         gateway_context_messages = list(prefill_messages) + list(gateway_history)
         if _use_runs_api:
@@ -1039,6 +1046,8 @@ def _run_gateway_chat_streaming(
                     logger.debug("Failed to build gateway multimodal attachment payload", exc_info=True)
                     message_content = str(msg_text or "")
             messages = list(gateway_context_messages)
+            if _prompt_only_mode:
+                messages = []
             messages.append({"role": "user", "content": message_content})
             body = {
                 "model": model or "default",
