@@ -8574,7 +8574,7 @@ def _run_agent_streaming(
             _prefill_context = _load_webui_prefill_context(_cfg)
             _prefill_messages = _prefill_messages_with_webui_context(_prefill_context, _cfg)
             _prefill_messages = _normalize_prefill_messages_before_user_turn(_prefill_messages)
-            _prompt_only_mode = True
+            _prompt_only_mode = not _webui_send_history_enabled(_cfg)
             if _prompt_only_mode:
                 _prefill_messages = []
             _main_request_overrides = _main_model_request_overrides(

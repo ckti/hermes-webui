@@ -328,6 +328,11 @@ def _gateway_send_history_enabled(config_data=None, environ: dict[str, str] | No
     return raw in ("1", "true", "yes", "on")
 
 
+def _gateway_prompt_only_mode(config_data=None, environ: dict[str, str] | None = None) -> bool:
+    """Return True when WebUI should suppress all Gateway prompt padding."""
+    return not _gateway_send_history_enabled(config_data, environ)
+
+
 def _gateway_session_history_messages(
     session: Any,
     cfg: dict | None,
@@ -562,6 +567,7 @@ def _run_gateway_runs_api_streaming(
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
             headers["X-Hermes-Session-Key"] = f"webui:{session_id}"
+        headers["X-Hermes-WebUI-Prompt-Only"] = "1" if _gateway_prompt_only_mode(cfg) else "0"
         message_content: Any = str(msg_text or "")
         if attachments:
             try:
@@ -950,7 +956,7 @@ def _run_gateway_chat_streaming(
             runs_api_pending_marked = False
         _gateway_system_prompt = ""
         prefill_messages = []
-        _prompt_only_mode = True
+        _prompt_only_mode = _gateway_prompt_only_mode(cfg)
         try:
             from api.streaming import (
                 _load_webui_prefill_context,
@@ -1065,6 +1071,7 @@ def _run_gateway_chat_streaming(
                 # Scope Gateway long-term continuity to this WebUI conversation
                 # without exposing the browser's auth cookie or CSRF material.
                 headers["X-Hermes-Session-Key"] = f"webui:{session_id}"
+            headers["X-Hermes-WebUI-Prompt-Only"] = "1" if _prompt_only_mode else "0"
             message_content: Any = str(msg_text or "")
             if attachments:
                 try:

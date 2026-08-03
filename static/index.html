@@ -1611,10 +1611,10 @@
               <div style="font-size:11px;color:var(--muted);margin-bottom:8px" data-i18n="settings_desc_gateway_status">Status of the Hermes gateway (Telegram, Discord, Slack, etc.)</div>
               <label class="extension-setting-check" style="margin-bottom:10px">
                 <input type="checkbox" id="settingsGatewaySendHistory">
-                <span>Send conversation history to Gateway</span>
+                <span>Send conversation history and prompt context to Gateway</span>
               </label>
               <div style="font-size:11px;color:var(--muted);margin-bottom:8px">
-                When enabled, WebUI sends the current transcript window to the Gateway. When disabled, only the current prompt is sent.
+                When enabled, WebUI sends the current transcript window plus its prompt context to the Gateway. When disabled, only the current prompt is sent.
               </div>
               <div id="gatewayStatusCard"><span style="color:var(--muted);font-size:12px">Loading…</span></div>
             </div>
