@@ -25,6 +25,7 @@ from api.gateway_chat import (
     webui_chat_backend_mode,
     webui_gateway_chat_enabled,
 )
+from api.streaming import _webui_send_history_enabled
 
 
 def test_gateway_chat_backend_is_default_off_for_truthy_values():
@@ -97,6 +98,19 @@ def test_gateway_chat_config_status_reports_history_toggle():
     )
 
     assert status["history_enabled"] is True
+
+
+def test_webui_send_history_toggle_defaults_off_and_accepts_truthy_values():
+    assert _webui_send_history_enabled({}, {}) is False
+    assert _webui_send_history_enabled({"webui_gateway_send_history": "true"}, {}) is True
+    assert _webui_send_history_enabled({"webui_gateway_send_history": "1"}, {}) is True
+
+
+def test_webui_send_history_env_wins_over_config():
+    assert _webui_send_history_enabled(
+        {"webui_gateway_send_history": "true"},
+        {"HERMES_WEBUI_GATEWAY_SEND_HISTORY": "false"},
+    ) is False
 
 
 def test_gateway_chat_backend_env_wins_over_config_and_stays_safe():

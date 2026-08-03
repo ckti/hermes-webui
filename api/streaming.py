@@ -993,6 +993,21 @@ def _public_prefill_context_status(prefill_context: dict) -> dict:
     }
 
 
+_WEBUI_GATEWAY_SEND_HISTORY_ENV = "HERMES_WEBUI_GATEWAY_SEND_HISTORY"
+
+
+def _webui_send_history_enabled(config_data: Optional[dict] = None, environ: Optional[dict[str, str]] = None) -> bool:
+    """Return True when WebUI should replay prior session messages to the agent."""
+    source = os.environ if environ is None else environ
+    cfg = config_data if isinstance(config_data, dict) else {}
+    raw = str(
+        source.get(_WEBUI_GATEWAY_SEND_HISTORY_ENV)
+        or cfg.get("webui_gateway_send_history")
+        or ""
+    ).strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
 def _webui_delivery_context_prompt(config_data: Optional[dict] = None) -> str:
     """Return platform/delivery context for the ephemeral system prompt.
 
@@ -8999,6 +9014,11 @@ def _run_agent_streaming(
             # can produce duplicates when context_messages and state.db share
             # messages with different timestamps.
             _previous_context_messages = _deduplicate_context_messages(_previous_context_messages)
+            _agent_history_for_turn = (
+                _previous_context_messages
+                if _webui_send_history_enabled(_cfg)
+                else []
+            )
             _pre_compression_count = getattr(
                 getattr(agent, 'context_compressor', None),
                 'compression_count', 0,
@@ -9057,7 +9077,7 @@ def _run_agent_streaming(
                 user_message=user_message,
                 system_message=workspace_system_msg,
                 conversation_history=_sanitize_messages_for_api(
-                    _previous_context_messages,
+                    _agent_history_for_turn,
                     cfg=_cfg,
                     effective_model=resolved_model,
                     effective_provider=resolved_provider,
@@ -9542,7 +9562,7 @@ def _run_agent_streaming(
                                     user_message=user_message,
                                     system_message=workspace_system_msg,
                                     conversation_history=_sanitize_messages_for_api(
-                                        _previous_context_messages,
+                                        _agent_history_for_turn,
                                         cfg=_cfg,
                                         effective_model=resolved_model,
                                         effective_provider=resolved_provider,
@@ -10774,7 +10794,7 @@ def _run_agent_streaming(
                             user_message=user_message,
                             system_message=workspace_system_msg,
                             conversation_history=_sanitize_messages_for_api(
-                                _previous_context_messages,
+                                _agent_history_for_turn,
                                 cfg=_cfg,
                                 effective_model=resolved_model,
                                 effective_provider=resolved_provider,
