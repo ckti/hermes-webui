@@ -38,6 +38,37 @@ from api.run_journal import RunJournalWriter, bound_run_journal_snapshot_args
 
 logger = logging.getLogger(__name__)
 
+
+def _webui_debug_outbound_prompt(payload_name: str, *, messages: list[dict[str, Any]], system_prompt: str | None = None) -> None:
+    """Log the exact outbound WebUI payload when debugging prompt padding."""
+    if str(os.getenv("HERMES_WEBUI_DEBUG_OUTBOUND_PROMPT", "")).strip().lower() not in {"1", "true", "yes", "on"}:
+        return
+    preview = []
+    for msg in messages or []:
+        if not isinstance(msg, dict):
+            continue
+        content = msg.get("content")
+        if isinstance(content, str):
+            content_preview = content if len(content) <= 400 else content[:400] + "..."
+            content_len = len(content)
+        else:
+            try:
+                content_preview = json.dumps(content, ensure_ascii=False)
+            except Exception:
+                content_preview = repr(content)
+            content_len = len(content_preview)
+        preview.append({
+            "role": str(msg.get("role") or ""),
+            "content_len": content_len,
+            "content": content_preview,
+        })
+    logger.info(
+        "[webui-debug] %s outbound payload system_prompt_len=%d messages=%s",
+        payload_name,
+        len(system_prompt or ""),
+        json.dumps(preview, ensure_ascii=False),
+    )
+
 # Maps stream_id -> gateway run_id for approval response relay.
 _STREAM_RUN_IDS: dict[str, str] = {}
 _STREAM_RUN_LIFECYCLE: dict[str, dict[str, Any]] = {}
@@ -1049,6 +1080,11 @@ def _run_gateway_chat_streaming(
             if _prompt_only_mode:
                 messages = []
             messages.append({"role": "user", "content": message_content})
+            _webui_debug_outbound_prompt(
+                "gateway_chat",
+                messages=messages,
+                system_prompt=_gateway_system_prompt or None,
+            )
             body = {
                 "model": model or "default",
                 "stream": True,

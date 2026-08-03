@@ -22,9 +22,51 @@ import time
 import traceback
 import copy
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
+
+
+def _webui_debug_outbound_prompt(payload_name: str, *, user_message: Any, system_message: str | None, conversation_history: list[dict[str, Any]]) -> None:
+    """Log the outbound WebUI payload when prompt-padding debugging is enabled."""
+    if str(os.getenv("HERMES_WEBUI_DEBUG_OUTBOUND_PROMPT", "")).strip().lower() not in {"1", "true", "yes", "on"}:
+        return
+
+    def _preview_message(msg: Any) -> dict[str, Any]:
+        if not isinstance(msg, dict):
+            return {"role": type(msg).__name__, "content_len": 0, "content": repr(msg)}
+        content = msg.get("content")
+        if isinstance(content, str):
+            preview = content if len(content) <= 400 else content[:400] + "..."
+            content_len = len(content)
+        else:
+            try:
+                preview = json.dumps(content, ensure_ascii=False)
+            except Exception:
+                preview = repr(content)
+            content_len = len(preview)
+        return {
+            "role": str(msg.get("role") or ""),
+            "content_len": content_len,
+            "content": preview,
+        }
+
+    if isinstance(user_message, dict) and isinstance(user_message.get("content"), str):
+        user_preview = user_message["content"]
+        user_len = len(user_message["content"])
+    else:
+        user_preview = repr(user_message)
+        user_len = len(user_preview)
+
+    logger.info(
+        "[webui-debug] %s outbound payload system_message_len=%d user_message_len=%d history_messages=%d history=%s user_message=%s",
+        payload_name,
+        len(system_message or ""),
+        user_len,
+        len(conversation_history or []),
+        json.dumps([_preview_message(msg) for msg in (conversation_history or [])], ensure_ascii=False),
+        user_preview if len(user_preview) <= 400 else user_preview[:400] + "...",
+    )
 
 from api.config import (
     get_config,
@@ -9110,6 +9152,12 @@ def _run_agent_streaming(
                 ),
                 task_id=session_id,
                 persist_user_message=msg_text,
+            )
+            _webui_debug_outbound_prompt(
+                "streaming",
+                user_message=user_message,
+                system_message=workspace_system_msg,
+                conversation_history=_run_conversation_kwargs["conversation_history"],
             )
             # Only pass moa_config when a /moa override is actually active, so a
             # normal send never trips a TypeError on an older hermes-agent whose
