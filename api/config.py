@@ -9198,6 +9198,8 @@ _SETTINGS_DEFAULTS = {
     "show_cron_sessions": False,  # surface cron sessions in the sidebar (subordinate to show_cli_sessions)
     "show_webhook_sessions": False,  # surface webhook sessions in the sidebar (subordinate to show_cli_sessions)
     "show_previous_messaging_sessions": False,  # show older Telegram/Discord/etc. reset segments
+    "webui_gateway_send_history": False,  # send transcript/history context to the Gateway
+    "webui_gateway_prompt_only": False,  # send only the current prompt to the Gateway
     "sync_to_insights": False,  # mirror WebUI token usage to state.db for /insights
     "check_for_updates": True,  # check if webui/agent repos are behind upstream
     "update_channel": "stable",  # stable | experimental — which release stream to track (stable = soaked/promoted; experimental = every batch)
