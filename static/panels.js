@@ -8676,6 +8676,8 @@ function _preferencesPayloadFromUi(){
   if(showWebhookCb) payload.show_webhook_sessions=!!(showCliCb&&showCliCb.checked&&showWebhookCb.checked);
   const showPreviousMessagingCb=$('settingsShowPreviousMessagingSessions');
   if(showPreviousMessagingCb) payload.show_previous_messaging_sessions=showPreviousMessagingCb.checked;
+  const gatewayPromptOnlyCb=$('settingsGatewayPromptOnly');
+  if(gatewayPromptOnlyCb) payload.webui_gateway_prompt_only=gatewayPromptOnlyCb.checked;
   const syncCb=$('settingsSyncInsights');
   if(syncCb) payload.sync_to_insights=syncCb.checked;
   const updateCb=$('settingsCheckUpdates');
@@ -9309,6 +9311,8 @@ async function loadSettingsPanel(){
     if(showPreviousMessagingCb){showPreviousMessagingCb.checked=!!settings.show_previous_messaging_sessions;showPreviousMessagingCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});}
     const gatewaySendHistoryCb=$('settingsGatewaySendHistory');
     if(gatewaySendHistoryCb){gatewaySendHistoryCb.checked=!!settings.webui_gateway_send_history;gatewaySendHistoryCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});}
+    const gatewayPromptOnlyCb=$('settingsGatewayPromptOnly');
+    if(gatewayPromptOnlyCb){gatewayPromptOnlyCb.checked=!!settings.webui_gateway_prompt_only;gatewayPromptOnlyCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});}
     const syncCb=$('settingsSyncInsights');
     if(syncCb){syncCb.checked=!!settings.sync_to_insights;syncCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});}
     const updateCb=$('settingsCheckUpdates');
@@ -12534,6 +12538,7 @@ async function saveSettings(andClose){
   body.show_webhook_sessions=showCliSessions&&showWebhookSessions;
   body.show_previous_messaging_sessions=showPreviousMessagingSessions;
   body.webui_gateway_send_history=!!($('settingsGatewaySendHistory')||{}).checked;
+  body.webui_gateway_prompt_only=!!($('settingsGatewayPromptOnly')||{}).checked;
   body.pinned_sessions_limit=pinnedSessionsLimit;
   body.sync_to_insights=!!($('settingsSyncInsights')||{}).checked;
   body.check_for_updates=!!($('settingsCheckUpdates')||{}).checked;

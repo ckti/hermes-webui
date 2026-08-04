@@ -43,6 +43,7 @@ PREFERENCE_FIELDS_AUTOSAVE = [
     ("settingsShowCliSessions", "show_cli_sessions"),
     ("settingsShowClaudeCodeSessions", "show_claude_code_sessions"),
     ("settingsShowPreviousMessagingSessions", "show_previous_messaging_sessions"),
+    ("settingsGatewayPromptOnly", "webui_gateway_prompt_only"),
     ("settingsSyncInsights", "sync_to_insights"),
     ("settingsCheckUpdates", "check_for_updates"),
     ("settingsIgnoreAgentUpdates", "ignore_agent_updates"),

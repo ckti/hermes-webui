@@ -1033,10 +1033,21 @@ def _public_prefill_context_status(prefill_context: dict) -> dict:
 
 
 _WEBUI_GATEWAY_SEND_HISTORY_ENV = "HERMES_WEBUI_GATEWAY_SEND_HISTORY"
+_WEBUI_GATEWAY_PROMPT_ONLY_ENV = "HERMES_WEBUI_GATEWAY_PROMPT_ONLY"
 
 
-def _webui_send_history_enabled(config_data: Optional[dict] = None, environ: Optional[dict[str, str]] = None) -> bool:
-    """Return True when WebUI should replay prior session messages to the agent."""
+def _webui_prompt_only_flag(config_data: Optional[dict] = None, environ: Optional[dict[str, str]] = None) -> bool:
+    source = os.environ if environ is None else environ
+    cfg = config_data if isinstance(config_data, dict) else {}
+    raw = str(
+        source.get(_WEBUI_GATEWAY_PROMPT_ONLY_ENV)
+        or cfg.get("webui_gateway_prompt_only")
+        or ""
+    ).strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
+def _webui_send_history_flag(config_data: Optional[dict] = None, environ: Optional[dict[str, str]] = None) -> bool:
     source = os.environ if environ is None else environ
     cfg = config_data if isinstance(config_data, dict) else {}
     raw = str(
@@ -1045,6 +1056,20 @@ def _webui_send_history_enabled(config_data: Optional[dict] = None, environ: Opt
         or ""
     ).strip().lower()
     return raw in ("1", "true", "yes", "on")
+
+
+def _webui_prompt_only_mode(config_data: Optional[dict] = None, environ: Optional[dict[str, str]] = None) -> bool:
+    """Return True when WebUI should suppress all Gateway prompt padding."""
+    source = os.environ if environ is None else environ
+    cfg = config_data if isinstance(config_data, dict) else {}
+    return _webui_prompt_only_flag(cfg, source)
+
+
+def _webui_send_history_enabled(config_data: Optional[dict] = None, environ: Optional[dict[str, str]] = None) -> bool:
+    """Return True when WebUI should replay prior session messages to the agent."""
+    source = os.environ if environ is None else environ
+    cfg = config_data if isinstance(config_data, dict) else {}
+    return _webui_send_history_flag(cfg, source)
 
 
 def _webui_delivery_context_prompt(config_data: Optional[dict] = None) -> str:
@@ -8574,7 +8599,7 @@ def _run_agent_streaming(
             _prefill_context = _load_webui_prefill_context(_cfg)
             _prefill_messages = _prefill_messages_with_webui_context(_prefill_context, _cfg)
             _prefill_messages = _normalize_prefill_messages_before_user_turn(_prefill_messages)
-            _prompt_only_mode = not _webui_send_history_enabled(_cfg)
+            _prompt_only_mode = _webui_prompt_only_mode(_cfg)
             if _prompt_only_mode:
                 _prefill_messages = []
             _main_request_overrides = _main_model_request_overrides(
@@ -8890,12 +8915,12 @@ def _run_agent_streaming(
                         agent.clarify_callback = _agent_kwargs.get('clarify_callback')
                     if 'prefill_messages' in _agent_kwargs and hasattr(agent, 'prefill_messages'):
                         agent.prefill_messages = list(_agent_kwargs.get('prefill_messages') or [])
+                    agent._prompt_only_mode = _prompt_only_mode
                     if _prompt_only_mode:
-                        agent._prompt_only_mode = True
                         agent.ephemeral_system_prompt = ""
                         agent.prefill_messages = []
-                        if hasattr(agent, '_invalidate_system_prompt'):
-                            agent._invalidate_system_prompt()
+                    if hasattr(agent, '_invalidate_system_prompt'):
+                        agent._invalidate_system_prompt()
                     if _session_db is not None:
                         # Prefer reusing a still-open SessionDB on the cached
                         # agent. Closing it mid-turn breaks background
@@ -8921,12 +8946,12 @@ def _run_agent_streaming(
                         agent._interrupt_message = None
                 else:
                     agent = _AIAgent(**_agent_kwargs)
+                    agent._prompt_only_mode = _prompt_only_mode
                     if _prompt_only_mode:
-                        agent._prompt_only_mode = True
                         agent.ephemeral_system_prompt = ""
                         agent.prefill_messages = []
-                        if hasattr(agent, '_invalidate_system_prompt'):
-                            agent._invalidate_system_prompt()
+                    if hasattr(agent, '_invalidate_system_prompt'):
+                        agent._invalidate_system_prompt()
                     # Register the new agent with the memory lifecycle so
                     # its commit_memory_session() can be found later.
                     try:
@@ -9047,11 +9072,11 @@ def _run_agent_streaming(
                 },
                 config_data=_cfg,
             )
+            agent._prompt_only_mode = _prompt_only_mode
             if _prompt_only_mode:
                 agent.ephemeral_system_prompt = ""
-                agent._prompt_only_mode = True
-                if hasattr(agent, '_invalidate_system_prompt'):
-                    agent._invalidate_system_prompt()
+            if hasattr(agent, '_invalidate_system_prompt'):
+                agent._invalidate_system_prompt()
             _pending_started_at = getattr(s, 'pending_started_at', None)
             meter().set_pending_started_at(stream_id, _pending_started_at)
             # Normal chat-start sets pending_started_at before spawning this thread;

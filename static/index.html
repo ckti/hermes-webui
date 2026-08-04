@@ -1616,6 +1616,13 @@
               <div style="font-size:11px;color:var(--muted);margin-bottom:8px">
                 When enabled, WebUI sends the current transcript window plus its prompt context to the Gateway. When disabled, only the current prompt is sent.
               </div>
+              <label class="extension-setting-check" style="margin-bottom:10px">
+                <input type="checkbox" id="settingsGatewayPromptOnly">
+                <span>Force prompt-only mode for Gateway</span>
+              </label>
+              <div style="font-size:11px;color:var(--muted);margin-bottom:8px">
+                When enabled, WebUI suppresses history, workspace padding, and other prompt context so only the current prompt is sent, even if history is enabled elsewhere.
+              </div>
               <div id="gatewayStatusCard"><span style="color:var(--muted);font-size:12px">Loading…</span></div>
             </div>
             <!-- MCP Servers Section -->

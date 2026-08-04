@@ -14,6 +14,7 @@ from api.config import PENDING_GOAL_CONTINUATION, STREAMS, create_stream_channel
 from api.models import new_session
 from api.gateway_chat import (
     _gateway_http_error_event,
+    _gateway_prompt_only_mode,
     _gateway_reasoning_delta,
     _gateway_send_history_enabled,
     _gateway_sse_delta,
@@ -25,7 +26,7 @@ from api.gateway_chat import (
     webui_chat_backend_mode,
     webui_gateway_chat_enabled,
 )
-from api.streaming import _webui_send_history_enabled
+from api.streaming import _webui_prompt_only_mode, _webui_send_history_enabled
 
 
 def test_gateway_chat_backend_is_default_off_for_truthy_values():
@@ -91,6 +92,14 @@ def test_gateway_send_history_env_wins_over_config():
     ) is False
 
 
+def test_gateway_prompt_only_override_wins_over_history_setting():
+    assert _gateway_prompt_only_mode({"webui_gateway_prompt_only": "true"}, {}) is True
+    assert _gateway_prompt_only_mode(
+        {"webui_gateway_send_history": "true"},
+        {"HERMES_WEBUI_GATEWAY_PROMPT_ONLY": "1"},
+    ) is True
+
+
 def test_gateway_chat_config_status_reports_history_toggle():
     status = gateway_chat_config_status(
         {"webui_gateway_send_history": "yes"},
@@ -111,6 +120,14 @@ def test_webui_send_history_env_wins_over_config():
         {"webui_gateway_send_history": "true"},
         {"HERMES_WEBUI_GATEWAY_SEND_HISTORY": "false"},
     ) is False
+
+
+def test_webui_prompt_only_override_wins_over_history_setting():
+    assert _webui_prompt_only_mode({"webui_gateway_prompt_only": "yes"}, {}) is True
+    assert _webui_prompt_only_mode(
+        {"webui_gateway_send_history": "true"},
+        {"HERMES_WEBUI_GATEWAY_PROMPT_ONLY": "on"},
+    ) is True
 
 
 def test_gateway_chat_backend_env_wins_over_config_and_stays_safe():

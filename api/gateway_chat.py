@@ -179,6 +179,7 @@ _WEBUI_GATEWAY_BASE_URL_ENV = "HERMES_WEBUI_GATEWAY_BASE_URL"
 _WEBUI_GATEWAY_API_KEY_ENV = "HERMES_WEBUI_GATEWAY_API_KEY"
 _WEBUI_GATEWAY_USE_RUNS_API_ENV = "HERMES_WEBUI_GATEWAY_USE_RUNS_API"
 _WEBUI_GATEWAY_SEND_HISTORY_ENV = "HERMES_WEBUI_GATEWAY_SEND_HISTORY"
+_WEBUI_GATEWAY_PROMPT_ONLY_ENV = "HERMES_WEBUI_GATEWAY_PROMPT_ONLY"
 _GATEWAY_CHAT_BACKENDS = {"gateway", "api_server", "api-server"}
 
 
@@ -316,8 +317,18 @@ def _gateway_use_runs_api_enabled(config_data=None, environ: dict[str, str] | No
     return raw in ("1", "true", "yes", "on")
 
 
-def _gateway_send_history_enabled(config_data=None, environ: dict[str, str] | None = None) -> bool:
-    """Return True when WebUI should include prior session messages in gateway requests."""
+def _gateway_prompt_only_flag(config_data=None, environ: dict[str, str] | None = None) -> bool:
+    source = os.environ if environ is None else environ
+    cfg = config_data if isinstance(config_data, dict) else {}
+    raw = str(
+        source.get(_WEBUI_GATEWAY_PROMPT_ONLY_ENV)
+        or cfg.get("webui_gateway_prompt_only")
+        or ""
+    ).strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
+def _gateway_send_history_flag(config_data=None, environ: dict[str, str] | None = None) -> bool:
     source = os.environ if environ is None else environ
     cfg = config_data if isinstance(config_data, dict) else {}
     raw = str(
@@ -328,9 +339,18 @@ def _gateway_send_history_enabled(config_data=None, environ: dict[str, str] | No
     return raw in ("1", "true", "yes", "on")
 
 
+def _gateway_send_history_enabled(config_data=None, environ: dict[str, str] | None = None) -> bool:
+    """Return True when WebUI should include prior session messages in gateway requests."""
+    source = os.environ if environ is None else environ
+    cfg = config_data if isinstance(config_data, dict) else {}
+    return _gateway_send_history_flag(cfg, source)
+
+
 def _gateway_prompt_only_mode(config_data=None, environ: dict[str, str] | None = None) -> bool:
     """Return True when WebUI should suppress all Gateway prompt padding."""
-    return not _gateway_send_history_enabled(config_data, environ)
+    source = os.environ if environ is None else environ
+    cfg = config_data if isinstance(config_data, dict) else {}
+    return _gateway_prompt_only_flag(cfg, source)
 
 
 def _gateway_session_history_messages(
