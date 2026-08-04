@@ -9521,6 +9521,7 @@ _SETTINGS_BOOL_KEYS = {
     "show_cron_sessions",
     "show_webhook_sessions",
     "show_previous_messaging_sessions",
+    "webui_gateway_prompt_only",
     "sync_to_insights",
     "check_for_updates",
     "ignore_agent_updates",
