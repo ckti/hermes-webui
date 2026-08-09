@@ -1160,6 +1160,22 @@
               </div>
               <div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="settings_desc_model">Used for new conversations. Existing conversations keep their selected model.</div>
             </div>
+            <div class="settings-field settings-context-switches" style="margin-top:14px">
+              <label data-i18n="settings_label_context_controls">LLM context</label>
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:8px">
+                <input type="checkbox" id="settingsLocalContext" style="width:15px;height:15px;accent-color:var(--accent)">
+                <span data-i18n="settings_label_local_context">Local context — send only the current turn</span>
+              </label>
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:8px">
+                <input type="checkbox" id="settingsSendSystemPrompt" style="width:15px;height:15px;accent-color:var(--accent)">
+                <span data-i18n="settings_label_send_system_prompt">Send system prompt</span>
+              </label>
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:8px">
+                <input type="checkbox" id="settingsSendToolDefinitions" style="width:15px;height:15px;accent-color:var(--accent)">
+                <span data-i18n="settings_label_send_tool_definitions">Send tool definitions</span>
+              </label>
+              <div style="font-size:11px;color:var(--muted);margin-top:6px" data-i18n="settings_desc_context_controls">The complete conversation remains stored locally. These switches control what is included in each request to the LLM.</div>
+            </div>
             <div class="settings-field">
               <label data-i18n="settings_label_auxiliary_models">Auxiliary Models</label>
               <div style="font-size:11px;color:var(--muted);margin-bottom:10px" data-i18n="settings_desc_auxiliary_models">Side-task routing for vision, compression, title generation, etc. "Auto" uses your main chat model.</div>

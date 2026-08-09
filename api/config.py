@@ -485,6 +485,61 @@ def get_config() -> dict:
     return _cfg_cache
 
 
+_AGENT_CONTEXT_SWITCH_DEFAULTS = {
+    "send_full_history": True,
+    "send_system_prompt": True,
+    "send_tool_definitions": True,
+}
+
+
+def agent_context_switches(config: dict | None = None) -> dict[str, bool]:
+    """Return the provider-context switches used by the shared Hermes Agent.
+
+    WebUI keeps the transcript locally, while the agent owns the final
+    provider-request filtering.  Keep this read path in WebUI aligned with the
+    agent defaults so the settings panel and the per-session cache use the same
+    effective values.
+    """
+    source = config if isinstance(config, dict) else get_config()
+    raw_context = source.get("context", {})
+    context = raw_context if isinstance(raw_context, dict) else {}
+
+    def _as_bool(value: object, default: bool) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in {"true", "1", "yes", "on"}
+
+    switches = {
+        key: _as_bool(value, default)
+        for key, default in _AGENT_CONTEXT_SWITCH_DEFAULTS.items()
+        for value in [context.get(key, default)]
+    }
+    switches["local_context"] = not switches["send_full_history"]
+    return switches
+
+
+def save_agent_context_switches(updates: dict) -> dict[str, bool]:
+    """Persist WebUI context controls to the active Hermes Agent profile."""
+    from hermes_cli.config import load_config, save_config
+
+    config = load_config()
+    context = config.get("context")
+    if not isinstance(context, dict):
+        context = {}
+        config["context"] = context
+
+    if "local_context" in updates:
+        context["send_full_history"] = not bool(updates["local_context"])
+    for key in ("send_system_prompt", "send_tool_definitions"):
+        if key in updates:
+            context[key] = bool(updates[key])
+
+    save_config(config)
+    return agent_context_switches(config)
+
+
 def get_config_snapshot() -> dict:
     """Return a request-owned config snapshot captured under the cache lock."""
     with _cfg_lock:

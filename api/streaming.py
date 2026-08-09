@@ -9202,6 +9202,8 @@ def _run_agent_streaming(
             # server toolsets are included, matching native CLI behaviour.
             from api.config import _resolve_cli_toolsets
             _toolsets = _resolve_cli_toolsets(_cfg)
+            from api.config import agent_context_switches as _agent_context_switches
+            _context_switches = _agent_context_switches(_cfg)
 
             # Per-session toolset override (#493): if the session has
             # enabled_toolsets set, use that instead of the global config.
@@ -9419,6 +9421,11 @@ def _run_agent_streaming(
                     _reasoning_config or {},
                     _main_request_overrides or {},
                     _public_prefill_context_status(_prefill_context),
+                    tuple(sorted(
+                        (key, value)
+                        for key, value in _context_switches.items()
+                        if key != 'local_context'
+                    )),
                     # #1897: profile_home is part of the agent's identity because
                     # AIAgent caches `_cached_system_prompt` from `load_soul_md()`
                     # at construction time, sourced from HERMES_HOME. Same-session

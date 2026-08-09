@@ -12648,6 +12648,17 @@ def handle_get(handler, parsed) -> bool:
 
     if parsed.path == "/api/settings":
         settings = load_settings()
+        try:
+            from api.config import agent_context_switches
+            settings.update(agent_context_switches())
+        except Exception:
+            # Keep the WebUI settings endpoint available when an older or
+            # incomplete Hermes Agent checkout is temporarily unavailable.
+            settings.update({
+                "local_context": False,
+                "send_system_prompt": True,
+                "send_tool_definitions": True,
+            })
         settings["persisted_speech_keys"] = persisted_speech_settings_keys()
         # Never expose the stored password hash to clients
         settings.pop("password_hash", None)
@@ -15954,6 +15965,18 @@ def handle_post(handler, parsed) -> bool:
         max_tokens_status = None
         max_tokens_value = body.pop("max_tokens", None) if max_tokens_provided else None
 
+        # These controls belong to Hermes Agent's profile config, not WebUI's
+        # browser-preference settings.json. Remove them before save_settings()
+        # and persist them through the shared Agent config writer instead.
+        _context_updates = {}
+        for _context_key in (
+            "local_context",
+            "send_system_prompt",
+            "send_tool_definitions",
+        ):
+            if _context_key in body:
+                _context_updates[_context_key] = bool(body.pop(_context_key))
+
         # First password creation decides who owns a previously passwordless
         # WebUI. While auth is disabled, the generic /api/settings route is also
         # unauthenticated, so gate bootstrap password setup the same way as
@@ -16007,6 +16030,9 @@ def handle_post(handler, parsed) -> bool:
         from api.config import get_max_tokens_status, set_max_tokens
 
         saved = save_settings(body)
+        if _context_updates:
+            from api.config import save_agent_context_switches
+            saved.update(save_agent_context_switches(_context_updates))
         saved["persisted_speech_keys"] = persisted_speech_settings_keys()
         if max_tokens_provided:
             max_tokens_status = set_max_tokens(max_tokens_value)

@@ -287,6 +287,10 @@ If an AI assistant is helping with install, reinstall, bootstrap, provider setup
 - Send key: Enter (default) or Ctrl/Cmd+Enter
 - Show/hide CLI sessions toggle (enabled by default)
 - Token usage display toggle (off by default, also via `/usage` command)
+- LLM context controls in Preferences: keep the full transcript local and send
+  only the current turn, include/exclude the system prompt, and include/exclude
+  tool definitions. The transcript remains available locally for WebUI history;
+  these switches control only the provider request.
 - Control Center always opens on the Conversation tab; resets on close
 - Unsaved changes guard -- discard/save prompt when closing with unpersisted changes
 - Cron completion alerts -- toast notifications and unread badges scoped to the active profile on the Tasks tab and session sidebar

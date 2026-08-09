@@ -8642,6 +8642,12 @@ function _setOwnedSpeechPayload(payload,settingKey,value){
 
 function _preferencesPayloadFromUi(){
   const payload={};
+  const localContextCb=$('settingsLocalContext');
+  if(localContextCb) payload.local_context=localContextCb.checked;
+  const sendSystemPromptCb=$('settingsSendSystemPrompt');
+  if(sendSystemPromptCb) payload.send_system_prompt=sendSystemPromptCb.checked;
+  const sendToolDefinitionsCb=$('settingsSendToolDefinitions');
+  if(sendToolDefinitionsCb) payload.send_tool_definitions=sendToolDefinitionsCb.checked;
   const sendKeySel=$('settingsSendKey');
   if(sendKeySel) payload.send_key=sendKeySel.value;
   const langSel=$('settingsLanguage');
@@ -9278,6 +9284,21 @@ async function loadSettingsPanel(){
     }
     const showUsageCb=$('settingsShowTokenUsage');
     if(showUsageCb){showUsageCb.checked=!!settings.show_token_usage;showUsageCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});}
+    const localContextCb=$('settingsLocalContext');
+    if(localContextCb){
+      localContextCb.checked=settings.local_context===true;
+      localContextCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});
+    }
+    const sendSystemPromptCb=$('settingsSendSystemPrompt');
+    if(sendSystemPromptCb){
+      sendSystemPromptCb.checked=settings.send_system_prompt!==false;
+      sendSystemPromptCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});
+    }
+    const sendToolDefinitionsCb=$('settingsSendToolDefinitions');
+    if(sendToolDefinitionsCb){
+      sendToolDefinitionsCb.checked=settings.send_tool_definitions!==false;
+      sendToolDefinitionsCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});
+    }
     const maxTokensField=$('settingsMaxTokens');
     if(maxTokensField){
       const rawMaxTokens=settings.max_tokens;
