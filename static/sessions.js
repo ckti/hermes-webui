@@ -189,6 +189,15 @@ function _clearRememberedNewChatDraftSession(sid) {
   } catch (_) {}
 }
 
+function _adoptRegenerationRevision(sessionPayload){
+  if(!S||!S.session||!sessionPayload||typeof sessionPayload!=='object') return;
+  if(Object.prototype.hasOwnProperty.call(sessionPayload,'regeneration_revision')){
+    S.session.regeneration_revision=sessionPayload.regeneration_revision;
+  }else{
+    delete S.session.regeneration_revision;
+  }
+}
+
 async function _restoreRememberedNewChatDraftSession() {
   let sid = '';
   try { sid = localStorage.getItem(NEW_CHAT_DRAFT_SESSION_KEY) || ''; } catch (_) { sid = ''; }
@@ -1400,15 +1409,20 @@ async function newSession(flash, options={}){
     _messagesTruncated=false;
     _oldestIdx=0;
     clearLiveToolCards();
-    // One-shot profile-switch workspace wins first; otherwise prefer the profile default.
+    // Explicit profile switch wins, then the current conversation, then the profile default.
+    // Provenance lets the server recover only a deleted inherited path; explicit paths stay strict.
     const switchWs=S._profileSwitchWorkspace;
     S._profileSwitchWorkspace=null;
-    const inheritWs=switchWs||(S._profileDefaultWorkspace||null)||(S.session?S.session.workspace:null);
+    const sessionWs=(!switchWs&&S.session)?S.session.workspace:null;
+    const inheritWs=switchWs||sessionWs||(S._profileDefaultWorkspace||null);
     const reqBody={
       workspace:inheritWs,
       profile:S.activeProfile||'default',
     };
-    if(S.session&&S.session.session_id) reqBody.prev_session_id=S.session.session_id;
+    if(S.session&&S.session.session_id){
+      reqBody.prev_session_id=S.session.session_id;
+      if(sessionWs) reqBody.workspace_inherited_from_prev_session=true;
+    }
     // Three-value worktree contract (#6022): explicit true/false is forwarded
     // verbatim; an ABSENT key lets the server apply the agent's config-level
     // `worktree:` default. Auto-bind paths pass worktree:false explicitly so a
@@ -1444,7 +1458,7 @@ async function newSession(flash, options={}){
     }
     if(newModelState&&newModelState.model){
       reqBody.model=newModelState.model;
-      // Cold-start / picker-without-provider fallback: when the dropdown option's
+      // Cold-start / picker-without-provider fallback (#2518): when the dropdown option's
       // data-provider is empty/'default' or the persisted state predates provider
       // tracking, newModelState.model_provider is null. POST /api/session/new's
       // fast path in _resolve_compatible_session_model_state requires both model
@@ -1491,7 +1505,7 @@ async function newSession(flash, options={}){
     if(consumedExplicitModelOverride&&typeof _clearEmptyComposerModelOverride==='function'){
       _clearEmptyComposerModelOverride();
     }
-    S.session=data.session;S.messages=data.session.messages||[];
+    S.session=data.session;if(typeof _adoptRegenerationRevision==='function') _adoptRegenerationRevision(data.session);S.messages=data.session.messages||[];
     S._pendingSessionToolsets=null;
     if(_sessionSourceFilter==='cli') _sessionSourceFilter='webui';
     if(typeof _hydrateTodosFromSession==='function') _hydrateTodosFromSession(S.session);
@@ -1703,6 +1717,12 @@ async function loadSession(sid){
   // #2971: idempotent re-arm before the no-op guard revives a stream a prior
   // failed loadSession killed; no-ops on real switches.
   _rearmActiveSessionStream();
+  // #6999: same-session force-reload coordination lives in the refresh paths
+  // (refreshActiveSessionIfExternallyUpdated guard + session-updated SSE
+  // handler in messages.js), NOT here: a second loadSession(sid,{force:true})
+  // for the same sid is a legitimate supersede (generation bump below) that
+  // cross-session ordering tests rely on. Coalescing at the entry point would
+  // drop the superseding fetch and leave a stale first load in charge.
   if(currentSid===sid && !forceReload && (!_loadingSessionId || _loadingSessionId===sid)){
     // Re-selecting the already-open session is a no-op for transcript/scroll, but
     // it is still a *visit*: clear a stale sidebar unread dot (e.g. one a
@@ -1734,6 +1754,13 @@ async function loadSession(sid){
   _yoloEnabled=false;_updateYoloPill();
   if(typeof stopClarifyPolling==='function') stopClarifyPolling();
   if(typeof hideClarifyCard==='function') hideClarifyCard(forceReload, forceReload?'external-refresh':'dismissed');
+  // #6572: clear stale compression state when switching sessions.
+  // The compression UI state is per-session and must not leak across loads.
+  // Without this, a compression card from a prior session can appear as a
+  // phantom "Compressing context" barrier on a fresh session that never
+  // triggered compression.
+  if(typeof clearCompressionUi==='function') clearCompressionUi();
+  else window._compressionUi=null;
   // Show loading indicator immediately for responsiveness.
   // Cleared by renderMessages() once full session data arrives.
   // Persist the current composer draft before switching away so it can be
@@ -1961,6 +1988,7 @@ async function loadSession(sid){
     return loadSession(continuationSid,{...opts,skipLineageResolve:true,skipContinuationResolve:true,force:true,_preloadNotified:true});
   }
   S.session=data.session;
+  if(typeof _adoptRegenerationRevision==='function') _adoptRegenerationRevision(data.session);
   if(typeof _clearEmptyComposerModelOverride==='function') _clearEmptyComposerModelOverride();
   // Loading a real existing session abandons any pre-session toolset override
   // staged on the empty composer before any deferred refresh work runs.
@@ -2374,7 +2402,7 @@ async function loadSession(sid){
     );
   }
 
-  if(typeof renderSessionArtifacts==='function') renderSessionArtifacts();
+  if(typeof projectSessionArtifactsForOwner==='function') projectSessionArtifactsForOwner(sid);
 
   // ── Cross-channel handoff hint ──
   // After session fully loaded, check if this is a messaging session with
@@ -2778,7 +2806,7 @@ function _showHandoffHint(sid, rounds) {
     </div>
     <div class="handoff-hint-actions">
       <button class="handoff-hint-action" type="button">View summary</button>
-      <button class="handoff-hint-dismiss" type="button" onclick="event.stopPropagation(); _dismissHandoffHint('${esc(sid)}')" title="Dismiss">
+      <button class="handoff-hint-dismiss" type="button" onclick="event.stopPropagation(); _dismissHandoffHint(${jsArg(sid)})" title="Dismiss">
         Close
       </button>
     </div>
@@ -2895,12 +2923,20 @@ async function _generateHandoffSummary(sid, rounds) {
   } catch (e) {
     console.warn('Handoff summary failed:', e);
     if (S.session && S.session.session_id === sid && typeof setHandoffUi === 'function') {
+      // A 400 carries an actionable, user-fixable message (e.g. an ambiguous
+      // custom-provider slug collision: rename one provider so its slug is
+      // unique). Surface it verbatim rather than degrading to the generic
+      // "try again" card — previously the server answered 200 with a warning
+      // that this handler ignored, hiding the fix from the user.
+      const errorText = (e && e.status === 400 && e.message)
+        ? e.message
+        : ('Summary generation failed: ' + (e && e.message ? e.message : 'unknown error'));
       setHandoffUi({
         sessionId: sid,
         phase: 'error',
         channel,
         rounds,
-        errorText: 'Summary generation failed: ' + e.message,
+        errorText,
       });
     }
   }
@@ -3180,9 +3216,23 @@ async function _ensureMessagesLoaded(sid, opts) {
   // Expand render window to cover all loaded messages so the next
   // renderMessages() doesn't hide most of them behind a tiny window.
   if(typeof _messageRenderableMessageCount==='function'&&typeof _currentMessageRenderWindowSize==='function'){
-    _messageRenderWindowSize=Math.max(_currentMessageRenderWindowSize(), _messageRenderableMessageCount());
+    // #6999: bound the auto-expansion. This number gates
+    // _messageHiddenBeforeCount() (load-older / jump-to-start affordances)
+    // and the non-virtualized fallback render width; the virtualized DOM tail
+    // is independently capped at MESSAGE_RENDER_WINDOW_DEFAULT via
+    // _messageVirtualKeepTailCount(). Growing the window to the FULL loaded
+    // transcript on every force reload (tab focus, SSE catch-up) zeroes the
+    // hidden-before count for long sessions and widens the effective render
+    // window for non-virtualized paths. Keep the #3686 intent (don't collapse
+    // back to the 50-row default after a load) but cap the growth to a small
+    // multiple of the default window.
+    _messageRenderWindowSize=Math.max(
+      _currentMessageRenderWindowSize(),
+      Math.min(_messageRenderableMessageCount(), (typeof MESSAGE_RENDER_WINDOW_DEFAULT==='number'?MESSAGE_RENDER_WINDOW_DEFAULT:50)*4)
+    );
   }
   if(S.session&&S.session.session_id===sid){
+    if(typeof _adoptRegenerationRevision==='function') _adoptRegenerationRevision(data.session);
     S.session.message_count=Number(data.session.message_count || msgs.length);
     S.lastUsage={...(data.session.last_usage||S.lastUsage||{})};
     // Phase 2: the messages=1 response carries the canonical cold-load
@@ -3879,6 +3929,11 @@ async function _ensureAllMessagesLoaded() {
     _syncToolCallsForLoadedMessages(msgs, data.session.tool_calls);
     if (S.session && S.session.session_id === sid) {
       S.session.message_count = Number(data.session.message_count || msgs.length);
+      if (Object.prototype.hasOwnProperty.call(data.session, 'regeneration_revision')) {
+        S.session.regeneration_revision = data.session.regeneration_revision;
+      } else {
+        delete S.session.regeneration_revision;
+      }
     }
   } finally {
     _loadingOlder = false;
@@ -5723,6 +5778,12 @@ let _sessionTimeRefreshVisibilityHandler = null;
 let _activeSessionExternalRefreshTimer = null;
 let _activeSessionExternalRefreshInFlight = false;
 let _deferredActiveSessionExternalRefreshReason = '';
+// #6999 re-gate: per-SID latch of the maximum message_count announced by a
+// `session-updated` frame while the external-refresh guard was held. The
+// refresh owner runs ONE guarded follow-up in its finally instead of letting
+// the event die — production does not guarantee a second event, so discarding
+// would leave the transcript stale until the next focus/poll.
+let _pendingSessionUpdatedCounts = null;
 let _sessionEventsSSE = null;
 let _sessionEventsRefreshTimer = 0;
 let _sessionEventsRefreshPendingRequest = null;
@@ -5815,6 +5876,51 @@ function _flushDeferredActiveSessionExternalRefresh(){
   void refreshActiveSessionIfExternallyUpdated(reason);
 }
 
+// #6999 re-gate: coalesce, never discard. Called by the messages.js
+// `session-updated` handler when it finds the external-refresh guard held:
+// instead of dropping the update (production does not guarantee a second
+// event), latch the MAXIMUM announced count per SID. The refresh owner's
+// finally drains it with ONE guarded follow-up.
+function _latchSessionUpdatedPendingCount(sid, count){
+  const n = Number(count);
+  if(!sid || !Number.isFinite(n)) return;
+  if(!_pendingSessionUpdatedCounts) _pendingSessionUpdatedCounts = {};
+  const prev = _pendingSessionUpdatedCounts[sid];
+  if(prev === undefined || n > prev) _pendingSessionUpdatedCounts[sid] = n;
+}
+
+// Single-line entry used by the messages.js `session-updated` handler:
+// returns true when the external-refresh probe owns the guard (the frame was
+// latched for the owner's finally to drain); returns false when the handler
+// should take its normal direct-load path.
+function _coalesceSessionUpdatedWhileRefreshHeld(sid, count){
+  if(typeof _activeSessionExternalRefreshInFlight === 'undefined' || !_activeSessionExternalRefreshInFlight) return false;
+  _latchSessionUpdatedPendingCount(sid, count);
+  return true;
+}
+
+// Drain the per-SID latch after the external-refresh owner releases its
+// guard. Runs ONE guarded follow-up only when local state is still behind
+// the latched count — a same-SID load during the refresh window already
+// caught us up, a switch-away moved the active session elsewhere, and
+// duplicate events coalesce into this single follow-up.
+function _drainSessionUpdatedPendingCount(){
+  const pending = _pendingSessionUpdatedCounts;
+  _pendingSessionUpdatedCounts = null;
+  if(!pending || !S.session || !S.session.session_id) return;
+  const sid = S.session.session_id;
+  const latched = pending[sid];
+  if(latched === undefined) return;
+  const localCount = Number(S.session.message_count || (Array.isArray(S.messages)?S.messages.length:0) || 0);
+  if(Number.isFinite(localCount) && localCount >= latched) return;
+  // The follow-up re-enters refreshActiveSessionIfExternallyUpdated, which
+  // re-probes server metadata and only force-reloads when the count actually
+  // changed — so the OOM guards (busy/stream/loading/document.hidden) all
+  // apply, and a metadata-read-only probe that already ran during the refresh
+  // window gets a second chance to observe the latched growth.
+  void refreshActiveSessionIfExternallyUpdated('session-updated');
+}
+
 // Reconcile the active session against server-side metadata. Returns a status
 // string so callers (notably the post-stream idle reconcile) can decide how to
 // react:
@@ -5839,6 +5945,10 @@ async function refreshActiveSessionIfExternallyUpdated(reason){
   if(_activeSessionExternalRefreshInFlight) return 'skipped';
   if(!S.session || !S.session.session_id) return 'skipped';
   if(S.busy || S.activeStreamId) return 'skipped';
+  // #6999: if a load for this exact session is already in flight, it owns the
+  // refresh — probing now would duplicate the fetch and the O(N) render work
+  // that exhausts the tab's JS heap when the tab comes back into focus.
+  if(_loadingSessionId === S.session.session_id) return 'skipped';
   if(typeof _isMessageReaderUnpinned==='function'&&_isMessageReaderUnpinned()){
     _deferActiveSessionExternalRefresh(reason||'poll');
     return 'skipped';
@@ -5923,6 +6033,10 @@ async function refreshActiveSessionIfExternallyUpdated(reason){
     return 'failed';
   }finally{
     _activeSessionExternalRefreshInFlight = false;
+    // #6999 re-gate: any `session-updated` frames that arrived while we owned
+    // the guard were latched (coalesced), not dropped — run ONE guarded
+    // follow-up when local state is still behind the latched count.
+    _drainSessionUpdatedPendingCount();
   }
 }
 
@@ -7008,6 +7122,8 @@ function _attachChildSessionsToSidebarRows(collapsedRows, rawSessions, rawRefere
   };
   const orphans=[];
   const renderableChildIds=new Set((rawSessions||[]).map(s=>s&&s.session_id).filter(Boolean));
+  const childAttachOrderById=new Map();
+  let childAttachCursor=0;
   const attachQueueById=new Map();
   for(const candidate of [...(rawSessions||[]),...(referenceSessions||[])]){
     if(candidate&&candidate.session_id&&!attachQueueById.has(candidate.session_id)) attachQueueById.set(candidate.session_id,candidate);
@@ -7062,6 +7178,9 @@ function _attachChildSessionsToSidebarRows(collapsedRows, rawSessions, rawRefere
     }
     if(parentRow){
       const childCopy={...child};
+      if(!childAttachOrderById.has(childCopy.session_id)){
+        childAttachOrderById.set(childCopy.session_id, childAttachCursor++);
+      }
       if(parentSegment){
         childCopy._parent_segment_id=parentSegment.session_id;
         childCopy._parent_segment_title=_sessionDisplayTitle(parentSegment)||child.parent_title||'Untitled';
@@ -7088,6 +7207,23 @@ function _attachChildSessionsToSidebarRows(collapsedRows, rawSessions, rawRefere
       // branch above and still orphans as before.
       if(child&&child._cross_surface_child_session&&_isChildSession(child)) continue;
       orphans.push({...child,_orphan_child_session:true});
+    }
+  }
+  const resolveReadOnlySession = typeof _isReadOnlySession === 'function'
+    ? _isReadOnlySession
+    : ((session) => !!(session && session.read_only));
+  for(const row of rows){
+    if(Array.isArray(row._child_sessions)&&row._child_sessions.length>1){
+      row._child_sessions.sort((a,b)=>{
+        const readOnlyCmp = Number(resolveReadOnlySession(a))-Number(resolveReadOnlySession(b));
+        if(readOnlyCmp!==0) return readOnlyCmp;
+        const aOrder = childAttachOrderById.get(a&&a.session_id) ?? Number.MAX_SAFE_INTEGER;
+        const bOrder = childAttachOrderById.get(b&&b.session_id) ?? Number.MAX_SAFE_INTEGER;
+        return aOrder-bOrder;
+      });
+    }
+    if(Array.isArray(row._child_sessions)){
+      row._child_session_count=row._child_sessions.length;
     }
   }
   return [...rows,...orphans];
@@ -7538,6 +7674,12 @@ function _attachProjectQuickCreateButton(chip, project){
       // project-assigned session appears deterministically.
       try{ if(typeof renderSessionListFromCache==='function') renderSessionListFromCache(); }catch(_){}
       try{ if(typeof renderSessionList==='function') void renderSessionList({deferWhileInteracting:false}); }catch(_){}
+      // Mobile: the sidebar is a full-screen drawer over the main view — close
+      // it after the project conversation is created so the user actually sees
+      // the new session (mirrors $('btnNewChat').onclick in boot.js and the
+      // #5409 close in _openSidebarSession). Failure path keeps the drawer open
+      // so the toast stays visible for retry.
+      if(typeof closeMobileSidebar==='function') closeMobileSidebar();
     }catch(err){
       _setActiveProjectFilter(previousProject);
       if(typeof showToast==='function') showToast('New conversation failed: '+(err&&err.message||err));
@@ -8201,7 +8343,7 @@ function renderSessionListFromCache(){
       const childList=document.createElement('div');
       childList.className='session-child-sessions';
       ['pointerdown','pointerup','click','touchstart','touchmove','touchend','touchcancel'].forEach(ev=>childList.addEventListener(ev,e=>e.stopPropagation()));
-      const sortedChildren=[...s._child_sessions].sort((a,b)=>_sessionTimestampMs(b)-_sessionTimestampMs(a));
+      const sortedChildren=[...s._child_sessions];
       const openChildSession=async(childSession)=>{
         await _openSidebarSession(childSession, {skipLineageResolve:true});
       };
