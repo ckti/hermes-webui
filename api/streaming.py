@@ -10966,6 +10966,7 @@ def _compute_agent_cache_signature(
     main_request_overrides=None,
     _main_request_overrides=None,
     prefill_context=None,
+    context_switches=None,
     profile_home: str | None = None,
     safe_profile_runtime_env: dict | None = None,
 ) -> str:
@@ -10992,6 +10993,11 @@ def _compute_agent_cache_signature(
         reasoning_config or {},
         _main_request_overrides or {},
         _public_prefill_context_status(prefill_context),
+        tuple(sorted(
+            (key, value)
+            for key, value in (context_switches or {}).items()
+            if key != 'local_context'
+        )),
         profile_home or '',
         _env.get('TERMINAL_ENV', '') or '',
         _env.get('TERMINAL_SSH_HOST', '') or '',
@@ -12971,6 +12977,8 @@ def _run_agent_streaming(
             # server toolsets are included, matching native CLI behaviour.
             from api.config import _resolve_cli_toolsets
             _toolsets = _resolve_cli_toolsets(_cfg)
+            from api.config import agent_context_switches as _agent_context_switches
+            _context_switches = _agent_context_switches(_cfg)
 
             # Per-session toolset override (#493): if the session has
             # enabled_toolsets set, use that instead of the global config.
@@ -13185,6 +13193,7 @@ def _run_agent_streaming(
                     reasoning_config=_reasoning_config,
                     main_request_overrides=_main_request_overrides,
                     prefill_context=_prefill_context,
+                    context_switches=_context_switches,
                     profile_home=_profile_home,
                     safe_profile_runtime_env=_safe_profile_runtime_env,
                 )

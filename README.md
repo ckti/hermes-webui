@@ -296,6 +296,10 @@ If an AI assistant is helping with install, reinstall, bootstrap, provider setup
 - Send-key on touch devices: plain Enter inserts a newline on phones (iPhone/iPod, Android phones) and on tablets / iPadOS / touch-capable Macs that only expose a coarse pointer (no attached hardware keyboard), matching the software keyboard's return key. Devices that report a fine pointer (for example, a tablet with a hardware keyboard) keep the configured physical-keyboard send-key behavior. The configured shortcut and the Send button remain available for sending.
 - Show/hide CLI sessions toggle (enabled by default)
 - Token usage display toggle (off by default, also via `/usage` command)
+- LLM context controls in Preferences: keep the full transcript local and send
+  only the current turn, include/exclude the system prompt, and include/exclude
+  tool definitions. The transcript remains available locally for WebUI history;
+  these switches control only the provider request.
 - Control Center always opens on the Conversation tab; resets on close
 - Unsaved changes guard -- discard/save prompt when closing with unpersisted changes
 - Cron completion alerts -- toast notifications and unread badges scoped to the active profile on the Tasks tab and session sidebar
